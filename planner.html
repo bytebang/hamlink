@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Ham-Link Richtfunk-Planer (OSM)</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<!-- PDF Export -->
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+
+<style>
+  html,body { height:100%; margin:0; font-family:system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+  #app { height:100%; display:grid; grid-template-rows:1fr auto; }
+  #map { height:100%; }
+  #panel { padding:10px; border-top:1px solid #ccc; background:#fafafa; display:grid; gap:10px; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  pre { background:#fff; border:1px solid #ddd; padding:10px; border-radius:8px; max-height:42vh; overflow:auto; margin:0; }
+  .mono { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+  button { padding:7px 10px; border-radius:8px; border:1px solid #aaa; cursor:pointer; background:#fff; }
+  button:hover { background:#f3f3f3; }
+  input { padding:6px; border-radius:8px; border:1px solid #aaa; }
+  .small { color:#555; font-size:0.92rem; }
+  .badge { display:inline-block; padding:2px 8px; border-radius:999px; border:1px solid #ccc; background:#fff; }
+  .muted { color:#777; }
+</style>
+</head>
+
+<body>
+<div id="app">
+  <div id="map"></div>
+
+  <div id="panel">
+    <div class="row">
+      <button id="btn-clear">Alle Marker löschen</button>
+      <button id="btn-undo">Letzten Marker entfernen</button>
+      <button id="btn-copy">Output kopieren</button>
+      <button id="btn-pdf">PDF Einsatzblatt</button>
+      <span class="small muted">Klick: Marker setzen • Marker anklicken: bearbeiten • Rechtsklick: löschen</span>
+    </div>
+
+    <div class="row small">
+      <span class="badge">SSID:
+        <span class="mono" id="ssidOut">—</span>
+      </span>
+
+      <label>Freq (GHz):
+        <input id="freqGHz" type="number" step="0.001" value="5.700" style="width:110px">
+      </label>
+
+      <span class="small muted">Fresnel F1 & Freiraumdämpfung (FSPL) werden ausgegeben.</span>
+    </div>
+
+    <pre id="out" class="mono">—</pre>
+  </div>
+</div>
+
+<script>
+/* ================= Maidenhead ================= */
+function maiden10(lat, lon) {
+  lat=Math.max(-90,Math.min(90,lat));
+  while(lon<-180)lon+=360; while(lon>=180)lon-=360;
+  let A=lon+180,B=lat+90;
+
+  const fL=Math.floor(A/20), fB=Math.floor(B/10);
+  let s=String.fromCharCode(65+fL)+String.fromCharCode(65+fB);
+  A-=fL*20; B-=fB*10;
+
+  const sL=Math.floor(A/2), sB=Math.floor(B);
+  s+=`${sL}${sB}`; A-=sL*2; B-=sB;
+
+  const ssL=Math.floor(A/(2/24)), ssB=Math.floor(B/(1/24));
+  s+=String.fromCharCode(97+ssL)+String.fromCharCode(97+ssB);
+  A-=ssL*(2/24); B-=ssB*(1/24);
+
+  const eL=Math.floor(A/((2/24)/10)), eB=Math.floor(B/((1/24)/10));
+  s+=`${eL}${eB}`; A-=eL*((2/24)/10); B-=eB*((1/24)/10);
+
+  const xL=Math.floor(A/(((2/24)/10)/24)), xB=Math.floor(B/(((1/24)/10)/24));
+  s+=String.fromCharCode(97+xL)+String.fromCharCode(97+xB);
+  return s.toUpperCase();
+}
+
+function cleanId(s){
+  return (s||"").toUpperCase().replace(/[^A-Z0-9\/]/g,"").slice(0,24);
+}
+
+/* ================= Geo helpers ================= */
+const R = 6371000; // m
+function toRad(d){ return d*Math.PI/180; }
+function toDeg(r){ return r*180/Math.PI; }
+
+function haversine_m(lat1, lon1, lat2, lon2){
+  const φ1=toRad(lat1), φ2=toRad(lat2);
+  const dφ=toRad(lat2-lat1), dλ=toRad(lon2-lon1);
+  const a=Math.sin(dφ/2)**2 + Math.cos(φ1)*Math.cos(φ2)*Math.sin(dλ/2)**2;
+  return 2*R*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+
+function bearing_deg(lat1, lon1, lat2, lon2){
+  const φ1=toRad(lat1), φ2=toRad(lat2);
+  const λ1=toRad(lon1), λ2=toRad(lon2);
+  const y=Math.sin(λ2-λ1)*Math.cos(φ2);
+  const x=Math.cos(φ1)*Math.sin(φ2) - Math.sin(φ1)*Math.cos(φ2)*Math.cos(λ2-λ1);
+  return (toDeg(Math.atan2(y,x))+360)%360;
+}
+function back_bearing_deg(b){ return (b+180)%360; }
+function cardinal(deg){
+  const d=["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
+  return d[Math.round(deg/22.5)%16];
+}
+
+function elev_angle_deg(hFrom, hTo, groundDist_m){
+  if(groundDist_m<=0) return 0;
+  return toDeg(Math.atan2((hTo-hFrom), groundDist_m));
+}
+
+/* Fresnel radius (F1) at midpoint in meters
+   midpoint => r = 8.66 * sqrt(d_km / f_GHz)
+*/
+function fresnelF1_mid_m(d_km, f_GHz){
+  if(d_km<=0 || f_GHz<=0) return 0;
+  return 8.66 * Math.sqrt(d_km / f_GHz);
+}
+
+/* Freiraumdämpfung (FSPL) in dB
+   FSPL(dB) = 92.45 + 20*log10(d_km) + 20*log10(f_GHz)
+   (d in km, f in GHz)
+*/
+function fspl_dB(d_km, f_GHz){
+  if(d_km<=0 || f_GHz<=0) return 0;
+  return 92.45 + 20*Math.log10(d_km) + 20*Math.log10(f_GHz);
+}
+
+/* ================= Elevation fetch (optional) ================= */
+async function fetchElevationMeters(lat, lon){
+  const url = `https://api.open-elevation.com/api/v1/lookup?locations=${lat},${lon}`;
+  const res = await fetch(url);
+  if(!res.ok) throw new Error("HTTP "+res.status);
+  const data = await res.json();
+  const elev = data?.results?.[0]?.elevation;
+  if(typeof elev !== "number") throw new Error("no elev");
+  return elev;
+}
+
+/* ================= Map ================= */
+const map = L.map("map").setView([47.07,15.44],9);
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(map);
+
+const markers=[];
+let polyline=L.polyline([], {weight:3}).addTo(map);
+
+/* ================= UI inputs ================= */
+const freqGHzEl = document.getElementById("freqGHz");
+const ssidOutEl = document.getElementById("ssidOut");
+freqGHzEl.addEventListener("input", () => update());
+
+/* ================= Ham-Link strings ================= */
+function topology(){
+  return markers.map(m=>m.id).join("<->");
+}
+
+function linkName(i){
+  return `${markers[i].id}--${markers[i+1].id}`;
+}
+
+function computeSSID(){
+  if(markers.length >= 2) return `HAMLINK(${markers[0].id}<=>${markers[markers.length-1].id})`;
+  return "—";
+}
+
+/* ================= Output ================= */
+function update(){
+  const out=[];
+  const ssid = computeSSID();
+  ssidOutEl.textContent = ssid;
+
+  if(markers.length){
+    const topo = topology();
+
+    out.push("# --- Ham-Link Autoconfig (copy/paste, add * to create config for QRT) ---");
+    out.push(`/system note set note="${topo}" show-at-login=yes`);
+    out.push("/system script run hamlink");
+    out.push("");
+
+    out.push("# --- WLAN Konventionen ---");
+    out.push(`# SSID (global): ${ssid}`);
+    out.push(`# WPA2-PW pro Link: LINKNAME (siehe unten)`);
+    out.push("");
+  }
+
+  out.push("STATIONEN");
+  out.push("--------");
+  if(!markers.length){
+    out.push("—");
+  } else {
+    markers.forEach((m,i)=>{
+      const ll=m.getLatLng();
+      const role = (i===0)?"A":(i===markers.length-1)?"B":"Z";
+      out.push(`${String(i+1).padStart(2,"0")}: ${m.id}  (${ll.lat.toFixed(6)}, ${ll.lng.toFixed(6)})  h=${m.h.toFixed(1)} m  → ${role}`);
+    });
+  }
+
+  out.push("");
+  out.push("LINKS (Hops) – Linkname = WPA2 Passwort");
+  out.push("--------------------------------------");
+
+  if(markers.length<2){
+    out.push("(mindestens 2 Stationen setzen)");
+  } else {
+    const f_GHz = Number(freqGHzEl.value);
+
+    for(let i=0;i<markers.length-1;i++){
+      const a=markers[i], b=markers[i+1];
+      const ll1=a.getLatLng(), ll2=b.getLatLng();
+
+      const d_m = haversine_m(ll1.lat,ll1.lng,ll2.lat,ll2.lng);
+      const d_km = d_m/1000;
+
+      const az = bearing_deg(ll1.lat,ll1.lng,ll2.lat,ll2.lng);
+      const baz = back_bearing_deg(az);
+
+      const el12 = elev_angle_deg(a.h, b.h, d_m);
+      const el21 = elev_angle_deg(b.h, a.h, d_m);
+
+      const f1 = fresnelF1_mid_m(d_km, f_GHz);
+      const fspl = fspl_dB(d_km, f_GHz);
+      const link = linkName(i);
+
+      out.push(`Link ${String(i+1).padStart(2,"0")}: ${link}`);
+      out.push(`  Distanz:      ${d_km.toFixed(3)} km`);
+      out.push(`  Peilung:      ${az.toFixed(1)}° ${cardinal(az)}`);
+      out.push(`  Gegenpeilung: ${baz.toFixed(1)}° ${cardinal(baz)}`);
+      out.push(`  Elevation:    ${el12.toFixed(3)}°   (Gegen: ${el21.toFixed(3)}°)`);
+      out.push(`  SSID:         ${ssid}`);
+      out.push(`  WPA2-PW:      ${link}`);
+      out.push(`  Fresnel F1@mid (${f_GHz.toFixed(3)} GHz): ${f1.toFixed(1)} m`);
+      out.push(`  Freiraumdämpfung (FSPL): ${fspl.toFixed(1)} dB`);
+      if(i<markers.length-2) out.push("");
+    }
+  }
+
+  document.getElementById("out").textContent = out.join("\n");
+  polyline.setLatLngs(markers.map(m=>m.getLatLng()));
+}
+
+/* ================= Popup ================= */
+function popupHtml(m){
+  const ll = m.getLatLng();
+  return `
+  <div style="min-width:320px">
+    <div><b>Station</b></div>
+    <div style="margin:6px 0" class="mono">
+      ${ll.lat.toFixed(6)}, ${ll.lng.toFixed(6)}
+    </div>
+
+    <label>Stationsname (Topology):</label><br>
+    <input data-role="id" value="${m.id}" style="width:240px">
+    <button data-act="setId" type="button">Setzen</button>
+
+    <div style="margin-top:10px">
+      <label>Höhe (m ü. NN):</label><br>
+      <input data-role="h" type="number" step="0.1" value="${m.h}" style="width:120px">
+      <button data-act="setH" type="button">Setzen</button>
+      <button data-act="fetchH" type="button">Höhe holen</button>
+    </div>
+
+    <div style="margin-top:10px">
+      <button data-act="remove" type="button">Marker löschen</button>
+    </div>
+
+    <div data-role="msg" class="small muted" style="margin-top:8px"></div>
+  </div>`;
+}
+
+function wire(marker){
+  marker.on("popupopen", ev => {
+    const root = ev.popup.getElement();
+    if(!root) return;
+
+    const content = root.querySelector(".leaflet-popup-content") || root;
+
+    setTimeout(() => {
+      const idIn = content.querySelector('input[data-role="id"]');
+      const hIn  = content.querySelector('input[data-role="h"]');
+      const msg  = content.querySelector('[data-role="msg"]');
+
+      if(!idIn || !hIn || !msg){
+        console.warn("Popup elements missing", {idIn, hIn, msg, content});
+        return;
+      }
+
+      const setMsg = (t)=> msg.textContent = t || "";
+
+      L.DomEvent.disableClickPropagation(content);
+      L.DomEvent.disableScrollPropagation(content);
+
+      content.addEventListener("click", async (e)=>{
+        const btn = e.target.closest("button[data-act]");
+        if(!btn) return;
+        e.preventDefault(); e.stopPropagation();
+
+        const act = btn.getAttribute("data-act");
+
+        if(act==="setId"){
+          const v = cleanId(idIn.value);
+          if(!v){ setMsg("Ungültiger Name."); return; }
+
+          marker.id = v;
+
+          try{
+            if(marker.getTooltip && marker.getTooltip()){
+              marker.setTooltipContent(marker.id);
+            } else {
+              marker.bindTooltip(marker.id);
+            }
+          } catch {}
+
+          idIn.value = marker.id;
+          setMsg("Stationsname gesetzt.");
+          update();
+        }
+
+        if(act==="setH"){
+          const raw = String(hIn.value ?? "").trim().replace(",", ".");
+          const v = Number(raw);
+          if(!Number.isFinite(v)){ setMsg("Ungültige Höhe. Beispiel: 523.4"); return; }
+          marker.h = v;
+          hIn.value = v.toFixed(1);
+          setMsg("Höhe gesetzt.");
+          update();
+        }
+
+        if(act==="fetchH"){
+          try{
+            setMsg("Hole Höhe…");
+            const ll = marker.getLatLng();
+            const elev = await fetchElevationMeters(ll.lat, ll.lng);
+            marker.h = elev;
+            hIn.value = elev.toFixed(1);
+            setMsg(`Höhe: ${elev.toFixed(1)} m`);
+            update();
+          } catch {
+            setMsg("Konnte Höhe nicht holen (API evtl. down/rate-limited).");
+          }
+        }
+
+        if(act==="remove"){
+          removeMarker(marker);
+        }
+      }, { once:false });
+
+    }, 0);
+  });
+}
+
+/* ================= Marker lifecycle ================= */
+function removeMarker(marker){
+  map.removeLayer(marker);
+  const idx = markers.indexOf(marker);
+  if(idx>=0) markers.splice(idx,1);
+  update();
+}
+
+map.on("click", e=>{
+  const m = L.marker(e.latlng, {draggable:true}).addTo(map);
+  m.id = maiden10(e.latlng.lat, e.latlng.lng);
+  m.h = 0;
+
+  m.bindTooltip(m.id);
+  m.bindPopup(()=>popupHtml(m));
+  wire(m);
+
+  m.on("click", ()=>{
+    m.setPopupContent(popupHtml(m));
+    m.openPopup();
+  });
+
+  m.on("contextmenu", ()=>removeMarker(m));
+  m.on("drag", ()=>update());
+
+  markers.push(m);
+  update();
+});
+
+/* ================= Buttons ================= */
+document.getElementById("btn-clear").onclick = ()=>{
+  markers.forEach(m=>map.removeLayer(m));
+  markers.length=0;
+  update();
+};
+
+document.getElementById("btn-undo").onclick = ()=>{
+  const last = markers.pop();
+  if(last) map.removeLayer(last);
+  update();
+};
+
+document.getElementById("btn-copy").onclick = async ()=>{
+  const t = document.getElementById("out").textContent;
+  if(!t || t.trim()==="—") return;
+  try { await navigator.clipboard.writeText(t); } catch {}
+};
+
+/* ================= PDF Export ================= */
+function exportPDF(){
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit:"pt", format:"a4" });
+
+  const text = document.getElementById("out").textContent || "";
+  const lines = doc.splitTextToSize(text, 560);
+
+  doc.setFont("courier", "normal");
+  doc.setFontSize(9);
+
+  let y = 40;
+  const lineH = 12;
+
+  doc.text("Ham-Link Einsatzblatt (Planung)", 40, 24);
+
+  for(const line of lines){
+    if(y > 800){
+      doc.addPage();
+      y = 40;
+    }
+    doc.text(line, 40, y);
+    y += lineH;
+  }
+
+  doc.save("hamlink_einsatzblatt.pdf");
+}
+
+document.getElementById("btn-pdf").onclick = exportPDF;
+
+/* initial */
+update();
+ssidOutEl.textContent = computeSSID();
+</script>
+</body>
+</html>
