@@ -114,7 +114,7 @@ Verbindung zwischen A und B über Z1 und Z2. Ist einer der Links unterbrochen br
 
 Aus diesen Rollen und den Standorten lassen sich die Namen der Stationen sowie der Links ableiten.
 
-**Stationsnamen** setzen sich immer aus dem Standort oder dem Operatorkuerzel sowie der Rolle der Station zusammen. Beim Standort Empfiehlt es sich einen GridLocator einzutragen - das hat den Charme das man danach auch die [Antennenausrichtung](https://afu-base.de/knife/index.php) berechnen kann
+**Stationsnamen** setzen sich immer aus dem Standort oder dem Operatorkuerzel sowie der Rolle der Station zusammen. Beim Standort Empfiehlt es sich einen GridLocator einzutragen - das hat den Charme das man danach auch die [Antennenausrichtung](https://afu-base.de/knife/index.php) berechnen kann.
 
 Der vollständige Name hat nicht mehr als 10 Zeichen, und besteht ausschließlich aus Großbuchstaben, Ziffern und dem Zeichen `/`. 
 Der hintangestellte Suffix `-A` oder `-B` kennzeichnet dann die Rolle der Station.
@@ -123,6 +123,7 @@ Hier einige gültige Beispiele:
 
 `OE6GUE-A` oder `OE6HUD/AM-A` oder z.B: bei einer Z Station: `JN77KK77rl-A` und `JN77KK77rl-B` oder geografisch `RENNFELD-A`.
 
+Wem das zu viel ist, der darf gerne den beigelegten [Planner](https://rawcdn.githack.com/bytebang/hamlink/main/planner.html) verwenden.
 
 **Links** ... also die Verbindung zwischen zwei Stationen tragen den Namen des A und B Links (ohne den Suffix) mit zwei Bindestrichen getrennt. Hier ein Beispiel wenn die A Station RENNFELD-A und die B Station OE6GUE-B heisst -> Dann wäre der Name des Links `RENNFELD--OE6GUE`. Es ist anzumerken das die Reihenfolge hier relevant ist, weil man daraus eben den A Teil (links) und B Teil (rechts) der Verbindung ableiten kann.
 
