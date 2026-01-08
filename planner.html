@@ -242,6 +242,12 @@ function update(){
     }
   }
 
+  out.push("\n\n");
+  out.push("# --- Script installation (if not installed yet) ---");
+  out.push(`:local url "https://raw.githubusercontent.com/bytebang/hamlink/refs/heads/main/hamlink.rsc"`);
+  out.push(`:local scriptData ([/tool fetch as-value output=user url=$url]->"data")`);
+  out.push(`/system script add name=hamlink source=$scriptData`);
+
   document.getElementById("out").textContent = out.join("\n");
   polyline.setLatLngs(markers.map(m=>m.getLatLng()));
 }
