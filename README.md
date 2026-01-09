@@ -123,7 +123,7 @@ Hier einige gültige Beispiele:
 
 `OE6GUE-A` oder `OE6HUD/AM-A` oder z.B: bei einer Z Station: `JN77KK77rl-A` und `JN77KK77rl-B` oder geografisch `RENNFELD-A`.
 
-Wem das zu viel ist, der darf gerne den beigelegten [planner.html](https://rawcdn.githack.com/bytebang/hamlink/refs/heads/main/planner.html) verwenden.
+Wem das zu viel ist, der darf gerne den beigelegten [planner.html](https://raw.githack.com/bytebang/hamlink/refs/heads/main/planner.html) verwenden.
 
 **Links** ... also die Verbindung zwischen zwei Stationen tragen den Namen des A und B Links (ohne den Suffix) mit zwei Bindestrichen getrennt. Hier ein Beispiel wenn die A Station RENNFELD-A und die B Station OE6GUE-B heisst -> Dann wäre der Name des Links `RENNFELD--OE6GUE`. Es ist anzumerken das die Reihenfolge hier relevant ist, weil man daraus eben den A Teil (links) und B Teil (rechts) der Verbindung ableiten kann.
 
