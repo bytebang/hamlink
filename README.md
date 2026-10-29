@@ -156,6 +156,8 @@ Jede Station verfügt über einen **5-Port-Switch** mit fest definierter Port-Fu
 
 Eine **korrekte Verkabelung** ist Voraussetzung für einen störungsfreien Betrieb.
 
+Das Script hängt **alle** Ethernet-Ports in die Bridge `br-hamlink` – die Port-Funktionen oben sind eine Verkabelungskonvention. Eine Verwaltungs-IP gehört daher auf `br-hamlink` und nicht auf einen einzelnen Port (eine IP auf einem Bridge-Port wird ungültig).
+
 ---
 
 ## Stationstypen im Detail
@@ -196,24 +198,30 @@ Optional können **zwei 12-V-Akkus in Serie (24 V)** verwendet werden.
 
 Um die Hardware entsprechend zu konfigurieren sind viele manuelle Schritte notwendig. Das ist i.d.R. recht fehleranfällig - weshalb ich hier ein Script zur Verfügung stelle die Scripts für die ensprecheden Geräte erstellt. Diese müssen dann nur mehr in die MikroTik Geräte eingespielt werden. Das kann einerseits mit [netinstall](https://help.mikrotik.com/docs/spaces/ROS/pages/24805390/Netinstall) oder auch händisch erfolgen.
 
-Dabei muss lediglich die System Identity eingegeben werden (damit das System weiß wer es ist) und in der System Note der Systemaufbau skizziert werden. Das config Script konfiguriert das Gerät dann dementsprechend.
+Dabei muss lediglich in der System Note der Systemaufbau skizziert werden. Bei den Funkgeräten (QRT) markiert ein Stern das Gerät selbst: `NAME*` ist die A-Seite (verbindet nach rechts), `*NAME` die B-Seite (verbindet nach links). Die PowerBox bekommt die Notiz **ohne** Stern. Das config Script leitet daraus Identity, Rolle, SSID, Passwort und Frequenz ab und konfiguriert das Gerät entsprechend.
 
-So sind auf dem Gerät "HOME" folgende Schritte notwendig
+### Script installieren
+
+Hat das Gerät Internetzugang, lädt es das Script selbst (den ganzen Block inkl. der geschwungenen Klammern einfügen – sonst gehen die lokalen Variablen zwischen den Zeilen verloren):
+
 ~~~
-# Hamlink Struktur setzen
-/system note set note="HOME*<->RELAIS<->REMOTE"
-
-# Config Script ausführen
-/system script run hamlink
+{
+  :local url "https://raw.githubusercontent.com/bytebang/hamlink/refs/heads/main/hamlink.rsc"
+  :local scriptData ([/tool fetch as-value output=user url=$url]->"data")
+  /system script add name=hamlink source=$scriptData
+}
 ~~~
 
+### Beispiel HOME – RELAIS – REMOTE
 
-Am Relais dann auf den QRTs
+Am QRT bei HOME (wird `HOME-A`):
 
 ~~~
 /system note set note="HOME*<->RELAIS<->REMOTE" show-at-login=yes
 /system script run hamlink
 ~~~
+
+Am Relais auf den beiden QRTs – der eine schaut Richtung HOME (wird `RELAIS-B`), der andere Richtung REMOTE (wird `RELAIS-A`):
 
 ~~~
 /system note set note="HOME<->*RELAIS<->REMOTE" show-at-login=yes
@@ -225,13 +233,19 @@ Am Relais dann auf den QRTs
 /system script run hamlink
 ~~~
 
-Und am REMOTE dann ... 
+Am QRT bei REMOTE (wird `REMOTE-B`):
 
 ~~~
 /system note set note="HOME<->RELAIS<->*REMOTE" show-at-login=yes
 /system script run hamlink
 ~~~
 
+Und auf jeder PowerBox (nur Bridge + PoE):
 
-Das Script `hamlink` setzt alle Parameter entsprechend ...
+~~~
+/system note set note="HOME<->RELAIS<->REMOTE" show-at-login=yes
+/system script run hamlink
+~~~
+
+Das Script räumt dabei nur auf, was es selbst angelegt hat (Bridge `br-hamlink`, Security-Profiles `hamlink-*`) und kann daher jederzeit mit einer neuen Notiz erneut ausgeführt werden. IP-Adressen, DHCP, Firewall und Routen bleiben unverändert.
 

@@ -1,5 +1,5 @@
 # ============================================================
-# Ham-Link Autoconfig v10 (star-driven roles)
+# Ham-Link Autoconfig v11 (star-driven roles)
 #
 # NEU (wichtig):
 #   - KEINE Board/Device-Unterscheidung mehr (kein RB911/PowerBox-Pro Match).
@@ -23,11 +23,17 @@
 #
 # SWITCH MODE (kein Stern):
 #   - Identität bleibt unverändert (kein /system identity set)
-#   - Es wird nur eine Bridge gebaut und Ether-Ports hinzugefügt
+#   - Es wird nur eine Bridge gebaut und alle Ether-Ports hinzugefügt
 #   - PoE wird "best-effort" via /interface ethernet set <iface> poe-out=auto-on gesetzt
 #
+# CLEANUP:
+#   - Entfernt wird nur, was das Script selbst anlegt (Bridge br-hamlink,
+#     Security-Profiles hamlink-*). IP-Adressen, DHCP, Firewall und Routen bleiben.
+#   - Eine Verwaltungs-IP gehört auf br-hamlink (nicht auf einen Ether-Port,
+#     der wird Bridge-Port und die IP dort damit ungültig).
+#
 # SSID (GLOBAL, based on PATH ENDPOINTS):
-#   HAMNET(<LEFT_END><=><RIGHT_END>)
+#   HAMLINK(<LEFT_END><=><RIGHT_END>)
 #
 # RF PARAMS via globals:
 #   :global hamlinkFrequencies   "5500,5520,5540"
@@ -143,7 +149,7 @@
 
 :if ([:len $leftEnd] = 0 || [:len $rightEnd] = 0) do={ :error "HAMLINK: endpoints empty after stripping '*'" }
 
-:local ssid ("HAMNET(" . $leftEnd . "<=>" . $rightEnd . ")")
+:local ssid ($HAMLINKTAG . "(" . $leftEnd . "<=>" . $rightEnd . ")")
 :log warning ("HAMLINK:S3.1 leftEnd=" . $leftEnd . " rightEnd=" . $rightEnd . " ssid=" . $ssid)
 
 # ----------------------------
@@ -214,34 +220,7 @@
   :log warning ("REMOVE failed: " . $message)
 }
 
-
-# IP addresses: remove 
-:local ipA [/ip address find]
-:if ([:len $ipA] > 0) do={ /ip address remove $ipA }
-
-# DHCP client/server/network: remove 
-:local dhc [/ip dhcp-client find]
-:if ([:len $dhc] > 0) do={ /ip dhcp-client remove $dhc }
-
-:local dhs [/ip dhcp-server find]
-:if ([:len $dhs] > 0) do={ /ip dhcp-server remove $dhs }
-
-:local dhn [/ip dhcp-server network find]
-:if ([:len $dhn] > 0) do={ /ip dhcp-server network remove $dhn }
-
-# Firewall: remove 
-:local ff [/ip firewall filter find]
-:if ([:len $ff] > 0) do={ /ip firewall filter remove $ff }
-
-:local fn [/ip firewall nat find]
-:if ([:len $fn] > 0) do={ /ip firewall nat remove $fn }
-
-:local fm [/ip firewall mangle find]
-:if ([:len $fm] > 0) do={ /ip firewall mangle remove $fm }
-
-# Static routes: remove 
-:local rt [/ip route find where static=yes]
-:if ([:len $rt] > 0) do={ /ip route remove $rt }
+# IP-Adressen, DHCP, Firewall und Routen werden bewusst NICHT angefasst
 
 :log warning "HAMLINK:S5 cleanup done"
 
@@ -255,7 +234,7 @@
 # ------------------------------------------------------------
 # Configure base bridge
 # ------------------------------------------------------------
-:log warning "HAMLINK:S7 SWITCH mode"
+:log warning "HAMLINK:S7 bridge ports"
 
 # Add ALL ethernet ports (best-effort)
 :foreach eId in=[/interface ethernet find] do={
@@ -266,19 +245,18 @@
   comment=("HAMLINK " . $e . " " . $leftEnd . "<->" . $rightEnd)
 
 :log info ("HAMLINK: added switch port " . $e)
+
+# PoE best-effort: Ports ohne PoE-Ausgang (z.B. QRT ether1) melden einen Fehler, der ignoriert wird
+:do { /interface ethernet set $eId poe-out=auto-on } on-error={}
 }
-
-:log warning "HAMLINK: finished (SWITCH mode)"
-:put "=================================================="
-:put ("HAMLINK SWITCH STATUS @ " . [/system clock get date] . " " . [/system clock get time])
-:put ("note: " . $note)
-:put ("bridge: " . $brName)
-:log warning "HAMLINK: done"
-
 
 # End here if we are not a radio
 :if ($isRadio = false) do={
-  :log warning "Config finished."
+  :put "=================================================="
+  :put ("HAMLINK SWITCH STATUS @ " . [/system clock get date] . " " . [/system clock get time])
+  :put ("note: " . $note)
+  :put ("bridge: " . $brName)
+  :log warning "HAMLINK: finished (SWITCH mode)"
   :return ""
 }
 
